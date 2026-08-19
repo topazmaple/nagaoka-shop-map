@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>長岡市 参加店舗マップ</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" />
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    overscroll-behavior: none;
+    -webkit-text-size-adjust: 100%;
+    touch-action: none; /* ページ全体のピンチズーム・スクロールをブラウザに奪われないようにする */
+  }
+  #header { padding-top: calc(14px + env(safe-area-inset-top, 0)); }
+  #header {
+    background: #1f2937;
+    color: #fff;
+    padding: 14px 18px;
+    font-size: 16px;
+    font-weight: bold;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  #header span.sub { font-weight: normal; font-size: 12px; color: #cbd5e1; }
+
+  /* 画面全体のレイアウト: ヘッダー / コンテンツ / 下部タブバー */
+  #app { display: flex; flex-direction: column; height: 100%; }
+  #content { flex: 1; position: relative; overflow: hidden; }
+
+  .tab-panel { position: absolute; inset: 0; display: none; }
+  .tab-panel.active { display: block; }
+
+  #map { height: 100%; width: 100%; touch-action: none; }
+
+  .popup-title { font-weight: bold; font-size: 14px; margin-bottom: 4px; }
+  .popup-genre { color: #6b7280; font-size: 12px; margin-bottom: 6px; }
+  .popup-coupon {
+    background: #fef3c7; color: #92400e; font-size: 12px;
+    padding: 4px 8px; border-radius: 6px; display: inline-block; margin-top: 4px;
+  }
+  .popup-visits { color: #2f6690; font-size: 12px; margin-top: 6px; }
+  .popup-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .popup-btn {
+    flex: 1; border: none; border-radius: 8px; padding: 8px 6px;
+    font-size: 12px; font-weight: bold; color: #fff; cursor: pointer;
+  }
+  .popup-btn.checkin { background: #2f6690; }
+  .popup-btn.photo { background: #81b29a; }
+
+  .mask-evenodd { fill-rule: evenodd !important; }
+  .shop-pin { background: transparent; border: none; }
+
+  /* Leafletのズームボタンをスマホで押しやすい位置・サイズに調整 */
+  .leaflet-control-zoom { margin-top: 12px !important; margin-left: 12px !important; }
+  .leaflet-control-zoom a { width: 38px !important; height: 38px !important; line-height: 38px !important; font-size: 18px !important; }
+
+  .locate-btn {
+    position: absolute; bottom: 24px; right: 12px; z-index: 500;
+    background: #fff; border: none; border-radius: 8px; padding: 10px 14px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.25); font-size: 13px; cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  /* 下部タブバー */
+  #tabbar {
+    display: flex; border-top: 1px solid #e5e7eb; background: #fff;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .tab-btn {
+    flex: 1; border: none; background: none; padding: 10px 0 8px;
+    font-size: 12px; color: #9ca3af; display: flex; flex-direction: column;
+    align-items: center; gap: 2px; cursor: pointer; touch-action: manipulation;
+  }
+  .tab-btn .icon { font-size: 20px; }
+  .tab-btn.active { color: #2f6690; font-weight: bold; }
+
+  /* アンケートタブ */
+  #survey-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 24px; box-sizing: border-box; text-align: center; background: #f9fafb; }
+  #survey-panel h2 { font-size: 18px; margin-bottom: 8px; color: #1f2937; }
+  #survey-panel p { font-size: 13px; color: #6b7280; margin-bottom: 24px; line-height: 1.6; }
+  .big-btn {
+    background: #2f6690; color: #fff; border: none; border-radius: 14px;
+    padding: 18px 28px; font-size: 15px; font-weight: bold; cursor: pointer;
+    box-shadow: 0 4px 10px rgba(47,102,144,0.3); touch-action: manipulation;
+  }
+
+  /* QRスキャナー・モーダル共通オーバーレイ */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 2000;
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .overlay.active { display: flex; }
+  .overlay video { width: 100%; max-width: 420px; border-radius: 12px; }
+  .overlay-msg { color: #fff; font-size: 14px; margin: 14px 0; text-align: center; padding: 0 20px; }
+  .overlay-close {
+    margin-top: 16px; background: #fff; border: none; border-radius: 20px;
+    padding: 10px 24px; font-size: 13px; font-weight: bold; cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  /* フォト(写真アップロード)モーダル */
+  #photo-modal .modal-box {
+    background: #fff; border-radius: 14px; padding: 20px; width: 85%; max-width: 360px;
+    text-align: center;
+  }
+  #photo-modal h3 { font-size: 15px; margin: 0 0 12px; color: #1f2937; }
+  #photo-preview { width: 100%; border-radius: 10px; margin-top: 12px; display: none; }
+  .photo-upload-label {
+    display: inline-block; background: #81b29a; color: #fff; padding: 10px 20px;
+    border-radius: 10px; font-size: 13px; cursor: pointer; margin-top: 8px;
+    touch-action: manipulation;
+  }
+
+  /* QR読み取り結果の確認モーダル(ここでのタップが新タブを開く直接のトリガーになる) */
+  #result-modal .modal-box {
+    background: #fff; border-radius: 14px; padding: 24px; width: 85%; max-width: 360px;
+    text-align: center;
+  }
+  #result-modal p { font-size: 14px; color: #1f2937; margin-bottom: 18px; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="header">
+    <span id="header-title">長岡市 参加店舗マップ</span>
+    <span class="sub">OpenStreetMap + Leaflet</span>
+  </div>
+
+  <div id="content">
+    <!-- マップタブ -->
+    <div id="map-panel" class="tab-panel active">
+      <div id="map"></div>
+      <button class="locate-btn" onclick="locateMe()">📍 現在地から探す</button>
+    </div>
+
+    <!-- アンケートタブ -->
+    <div id="survey-panel" class="tab-panel">
+      <h2>店舗アンケートに回答</h2>
+      <p>店内に掲示されているアンケート用QRコードを<br>読み取ると、フォームが開きます。</p>
+      <button class="big-btn" onclick="openSurveyScanner()">📷 QRコードを読み取る</button>
+    </div>
+  </div>
+
+  <!-- 下部タブバー -->
+  <div id="tabbar">
+    <button class="tab-btn active" id="tab-map" onclick="switchTab('map')">
+      <span class="icon">🗺️</span>マップ
+    </button>
+    <button class="tab-btn" id="tab-survey" onclick="switchTab('survey')">
+      <span class="icon">📝</span>アンケート
+    </button>
+  </div>
+</div>
+
+<!-- QRスキャナー・オーバーレイ(来店確認・アンケート共通) -->
+<div class="overlay" id="qr-overlay">
+  <video id="qr-video" playsinline autoplay muted></video>
+  <div class="overlay-msg" id="qr-msg">QRコードを枠内に映してください</div>
+  <button class="overlay-close" onclick="closeScanner()">キャンセル</button>
+</div>
+
+<!-- フォト(写真アップロード)モーダル -->
+<div class="overlay" id="photo-modal">
+  <div class="modal-box">
+    <h3 id="photo-shop-name">写真を投稿</h3>
+    <label class="photo-upload-label">
+      写真を選択・撮影する
+      <input type="file" accept="image/*" capture="environment" id="photo-input" style="display:none;">
+    </label>
+    <img id="photo-preview">
+    <div style="margin-top:14px;">
+      <button class="overlay-close" onclick="closePhotoModal()">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- QR読み取り結果の確認モーダル -->
+<div class="overlay" id="result-modal">
+  <div class="modal-box">
+    <p>QRコードを読み取りました。<br>アンケートフォームを開きます。</p>
+    <button class="big-btn" id="result-open-btn">フォームを開く</button>
+    <div>
+      <button class="overlay-close" onclick="closeResultModal()">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script>
+  /* =========================================================
+     タブ切り替え
+  ========================================================= */
+  function switchTab(name) {
+    document.querySelectorAll('.tab-panel').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById(name + '-panel').classList.add('active');
+    document.getElementById('tab-' + name).classList.add('active');
+    document.getElementById('header-title').textContent =
+      name === 'map' ? '長岡市 参加店舗マップ' : 'お店アンケート';
+    // マップタブに戻ったときにサイズがずれることがあるので再計算する
+    if (name === 'map') setTimeout(() => map.invalidateSize(), 50);
+  }
+
+  /* =========================================================
+     来店回数の保存(店舗ごと・端末ごとに保存し、1日1回までカウント)
+     ※このページを外部サイト(GitHub Pagesなど)で公開した状態で動かす想定のため、
+       ブラウザのlocalStorageを使って「その端末」の来店記録を保持しています。
+  ========================================================= */
+  function todayStr() {
+    const d = new Date();
+    return d.getFullYear() + '-' + (d.getMonth()+1) + '-' + d.getDate();
+  }
+  function getVisitCount(shopId) {
+    return parseInt(localStorage.getItem('visitCount_' + shopId) || '0', 10);
+  }
+  function getLastVisitDate(shopId) {
+    return localStorage.getItem('lastVisit_' + shopId) || '';
+  }
+  function registerVisit(shopId) {
+    const last = getLastVisitDate(shopId);
+    if (last === todayStr()) {
+      return { ok: false, count: getVisitCount(shopId) };
+    }
+    const newCount = getVisitCount(shopId) + 1;
+    localStorage.setItem('visitCount_' + shopId, String(newCount));
+    localStorage.setItem('lastVisit_' + shopId, todayStr());
+    return { ok: true, count: newCount };
+  }
+
+  /* =========================================================
+     長岡市の境界マスク・地図の初期化
+  ========================================================= */
+  const fallbackBounds = L.latLngBounds([37.28, 138.70], [37.62, 139.05]);
+
+  const map = L.map('map', {
+    minZoom: 10,
+    touchZoom: true,      // 2本指ピンチでの地図ズームを明示的に有効化
+    tap: true,            // タッチ操作(タップ)を有効化
+    bounceAtZoomLimits: false
+  }).setView([37.4468, 138.8514], 13);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+    maxZoom: 19,
+    subdomains: 'abcd'
+  }).addTo(map);
+
+  const worldRing = [[-89, -179], [-89, 179], [89, 179], [89, -179]];
+
+  function toHoleRings(geometry) {
+    const rings = [];
+    if (geometry.type === "Polygon") {
+      rings.push(geometry.coordinates[0].map(c => [c[1], c[0]]));
+    } else if (geometry.type === "MultiPolygon") {
+      geometry.coordinates.forEach(poly => rings.push(poly[0].map(c => [c[1], c[0]])));
+    }
+    return rings;
+  }
+
+  function applyMask(geometry) {
+    const holes = toHoleRings(geometry);
+    L.polygon([worldRing, ...holes], {
+      stroke: false, fillColor: "#ffffff", fillOpacity: 1,
+      interactive: false, className: "mask-evenodd"
+    }).addTo(map);
+    L.geoJSON(geometry, { style: { color: "#1f2937", weight: 2, fill: false, opacity: 0.5 } }).addTo(map);
+  }
+
+  fetch("https://nominatim.openstreetmap.org/search?city=%E9%95%B7%E5%B2%A1%E5%B8%82&state=%E6%96%B0%E6%BD%9F%E7%9C%8C&country=japan&format=json&polygon_geojson=1&limit=1")
+    .then(res => res.json())
+    .then(data => {
+      if (data && data.length > 0 && data[0].geojson) {
+        const geometry = data[0].geojson;
+        applyMask(geometry);
+        const layer = L.geoJSON(geometry);
+        const bounds = layer.getBounds();
+        map.fitBounds(bounds, { padding: [10, 10] });
+        map.setMaxBounds(bounds.pad(0.05));
+      } else {
+        throw new Error("no geojson");
+      }
+    })
+    .catch(() => {
+      map.setMaxBounds(fallbackBounds);
+      map.fitBounds(fallbackBounds);
+    });
+
+  /* =========================================================
+     店舗データ
+  ========================================================= */
+  const shops = [
+    { name: "安田茶屋", genre: "甘味処・茶屋", coupon: "アンケート回答でクーポン進呈", lat: 37.4526, lng: 138.8351, color: "#8e5572" },
+    { name: "小嶋屋総本店 長岡喜多町店", genre: "へぎそば", coupon: "アンケート回答でクーポン進呈", lat: 37.4428, lng: 138.8142, color: "#3d84a8" },
+    { name: "レストラン ナポリ", genre: "洋食", coupon: "アンケート回答でクーポン進呈", lat: 37.4475, lng: 138.8504, color: "#81b29a" },
+    { name: "洋食 松キッチン", genre: "洋食", coupon: "アンケート回答でクーポン進呈", lat: 37.4481, lng: 138.8532, color: "#81b29a" },
+    { name: "長岡小嶋屋 本店", genre: "へぎそば", coupon: "アンケート回答でクーポン進呈", lat: 37.4478, lng: 138.8521, color: "#3d84a8" },
+    { name: "青島食堂 宮内駅前店", genre: "ラーメン・食堂", coupon: "アンケート回答でクーポン進呈", lat: 37.4225, lng: 138.8418, color: "#f2a541" },
+    { name: "いちまる", genre: "ラーメン", coupon: "アンケート回答でクーポン進呈", lat: 37.4468, lng: 138.8509, color: "#f2a541" },
+    { name: "ラーメン潤 柿川店", genre: "ラーメン", coupon: "アンケート回答でクーポン進呈", lat: 37.4452, lng: 138.8522, color: "#f2a541" },
+    { name: "美松(MIMATSU CAFE 大手店)", genre: "カフェ", coupon: "アンケート回答でクーポン進呈", lat: 37.4472, lng: 138.8518, color: "#2f6690" },
+    { name: "小松パン店", genre: "パン", coupon: "アンケート回答でクーポン進呈", lat: 37.4461, lng: 138.8502, color: "#e09f3e" },
+    { name: "江口だんご 本店", genre: "和菓子・だんご", coupon: "アンケート回答でクーポン進呈", lat: 37.4211, lng: 138.7758, color: "#d1495b" }
+  ];
+
+  function coloredIcon(color) {
+    return L.divIcon({
+      className: "shop-pin",
+      html: `
+        <svg width="30" height="40" viewBox="0 0 30 40" xmlns="http://www.w3.org/2000/svg">
+          <path d="M15 0C6.7 0 0 6.7 0 15c0 11 15 25 15 25s15-14 15-25C30 6.7 23.3 0 15 0z" fill="${color}" stroke="#ffffff" stroke-width="2"/>
+          <circle cx="15" cy="15" r="6" fill="#ffffff"/>
+        </svg>
+      `,
+      iconSize: [30, 40], iconAnchor: [15, 40], popupAnchor: [0, -36]
+    });
+  }
+
+  function popupHtml(shop, shopId) {
+    const count = getVisitCount(shopId);
+    return `
+      <div class="popup-title">${shop.name}</div>
+      <div class="popup-genre">${shop.genre}</div>
+      <div class="popup-coupon">🎫 ${shop.coupon}</div>
+      <div class="popup-visits" id="visits-${shopId}">✅ 来店回数: ${count}回</div>
+      <div class="popup-actions">
+        <button class="popup-btn checkin" onclick="startCheckIn(${shopId})">来店</button>
+        <button class="popup-btn photo" onclick="openPhotoModal(${shopId})">フォト</button>
+      </div>
+    `;
+  }
+
+  const markers = L.markerClusterGroup({
+    iconCreateFunction: function(cluster) {
+      return L.divIcon({
+        html: `<div style="background:#2f6690; color:#fff; border-radius:50%; width:36px; height:36px; display:flex; align-items:center; justify-content:center; font-weight:bold; border:2px solid #fff;">${cluster.getChildCount()}</div>`,
+        className: "", iconSize: [36, 36]
+      });
+    }
+  });
+
+  const shopMarkers = [];
+  shops.forEach((shop, shopId) => {
+    const marker = L.marker([shop.lat, shop.lng], { icon: coloredIcon(shop.color) });
+    marker.bindPopup(popupHtml(shop, shopId));
+    markers.addLayer(marker);
+    shopMarkers.push(marker);
+  });
+  map.addLayer(markers);
+
+  let userMarker = null;
+  function locateMe() {
+    if (!navigator.geolocation) { alert("この端末では位置情報を取得できません"); return; }
+    navigator.geolocation.getCurrentPosition(pos => {
+      const { latitude, longitude } = pos.coords;
+      if (userMarker) map.removeLayer(userMarker);
+      userMarker = L.circleMarker([latitude, longitude], {
+        radius: 8, fillColor: "#2563eb", color: "#fff", weight: 2, fillOpacity: 1
+      }).addTo(map).bindPopup("現在地").openPopup();
+      map.setView([latitude, longitude], 15);
+    }, () => alert("位置情報を取得できませんでした"));
+  }
+
+  /* =========================================================
+     QRコードスキャナー(来店確認・アンケート共通で使う)
+  ========================================================= */
+  let qrStream = null;
+  let qrAnimationId = null;
+  let qrOnSuccess = null; // スキャン成功時に呼ぶコールバック
+
+  function openScanner(message, onSuccess) {
+    qrOnSuccess = onSuccess;
+    document.getElementById('qr-msg').textContent = message;
+
+    // file:// で開いている場合や非対応ブラウザの場合はカメラAPIが使えない
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert(
+        "カメラを起動できませんでした。\n\n" +
+        "考えられる原因:\n" +
+        "・このページを file:// で直接開いている(httpsで公開されたURLからアクセスする必要があります)\n" +
+        "・お使いのブラウザがカメラ機能に対応していない"
+      );
+      return;
+    }
+
+    document.getElementById('qr-overlay').classList.add('active');
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+      .then(stream => {
+        qrStream = stream;
+        const video = document.getElementById('qr-video');
+        video.srcObject = stream;
+        video.setAttribute('playsinline', true);
+        video.play();
+        requestAnimationFrame(scanFrame);
+      })
+      .catch((err) => {
+        alert("カメラを起動できませんでした。カメラの利用を許可してください。\n(" + err.name + ")");
+        closeScanner();
+      });
+  }
+
+  function scanFrame() {
+    const video = document.getElementById('qr-video');
+    if (!document.getElementById('qr-overlay').classList.contains('active')) return;
+
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      if (code && code.data) {
+        const callback = qrOnSuccess;
+        closeScanner();
+        if (callback) callback(code.data);
+        return;
+      }
+    }
+    qrAnimationId = requestAnimationFrame(scanFrame);
+  }
+
+  function closeScanner() {
+    document.getElementById('qr-overlay').classList.remove('active');
+    if (qrAnimationId) cancelAnimationFrame(qrAnimationId);
+    if (qrStream) {
+      qrStream.getTracks().forEach(track => track.stop());
+      qrStream = null;
+    }
+  }
+
+  /* =========================================================
+     来店確認フロー
+  ========================================================= */
+  function startCheckIn(shopId) {
+    map.closePopup();
+    openScanner("店頭のQRコードを読み取ってください", () => {
+      // デモ用: QRコードが読み取れれば来店確認とする
+      // (実運用では店舗ごとに異なるQR内容を発行し、code.dataと照合するとより確実)
+      const result = registerVisit(shopId);
+      if (result.ok) {
+        alert(`${shops[shopId].name} への来店を記録しました🎉\n(来店回数: ${result.count}回)`);
+      } else {
+        alert("本日はすでに来店記録済みです。ご来店ありがとうございます。\n来店記録は1日1回までとなります。");
+      }
+      // ポップアップを開き直して来店回数の表示を更新する
+      shopMarkers[shopId].setPopupContent(popupHtml(shops[shopId], shopId));
+      shopMarkers[shopId].openPopup();
+    });
+  }
+
+  /* =========================================================
+     アンケートQR読み取りフロー(読み取った内容がURLならそのまま開く)
+  ========================================================= */
+  function openSurveyScanner() {
+    openScanner("アンケート用QRコードを読み取ってください", (text) => {
+      if (/^https?:\/\//i.test(text)) {
+        showResultModal(text);
+      } else {
+        alert("読み取った内容: " + text);
+      }
+    });
+  }
+
+  function showResultModal(url) {
+    const btn = document.getElementById('result-open-btn');
+    // ボタンのタップという「ユーザー操作の直後」に新しいタブを開くことで、
+    // スマホのブラウザでもポップアップブロックや意図しないタブ切り替えを避ける
+    btn.onclick = () => {
+      window.open(url, '_blank');
+      closeResultModal();
+    };
+    document.getElementById('result-modal').classList.add('active');
+  }
+  function closeResultModal() {
+    document.getElementById('result-modal').classList.remove('active');
+  }
+
+  /* =========================================================
+     フォト(写真投稿)モーダル
+     ※現時点ではブラウザ内でのプレビュー表示のみのデモです。
+       実際に店舗へ写真を送る場合は、アップロード先(サーバーやストレージ)の
+       準備が別途必要です。
+  ========================================================= */
+  let currentPhotoShopId = null;
+  function openPhotoModal(shopId) {
+    map.closePopup();
+    currentPhotoShopId = shopId;
+    document.getElementById('photo-shop-name').textContent = shops[shopId].name + ' の写真を投稿';
+    document.getElementById('photo-preview').style.display = 'none';
+    document.getElementById('photo-input').value = '';
+    document.getElementById('photo-modal').classList.add('active');
+  }
+  function closePhotoModal() {
+    document.getElementById('photo-modal').classList.remove('active');
+  }
+  document.getElementById('photo-input').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+      const preview = document.getElementById('photo-preview');
+      preview.src = ev.target.result;
+      preview.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+  });
+</script>
+
+</body>
+</html>
