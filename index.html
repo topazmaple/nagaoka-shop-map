@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>長岡市 参加店舗マップ(デモ)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" />
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; font-family: "Hiragino Sans", "Yu Gothic", sans-serif; }
+  #header {
+    background: #1f2937;
+    color: #fff;
+    padding: 14px 18px;
+    font-size: 16px;
+    font-weight: bold;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  #header span.sub {
+    font-weight: normal;
+    font-size: 12px;
+    color: #cbd5e1;
+  }
+  #map { height: calc(100% - 52px); width: 100%; }
+  .popup-title { font-weight: bold; font-size: 14px; margin-bottom: 4px; }
+  .popup-genre { color: #6b7280; font-size: 12px; margin-bottom: 6px; }
+  .popup-coupon {
+    background: #fef3c7;
+    color: #92400e;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    display: inline-block;
+    margin-top: 4px;
+  }
+  /* マスクの塗りつぶしを「穴の向き」に依存しないevenoddルールに固定する */
+  .mask-evenodd { fill-rule: evenodd !important; }
+  /* カスタムピンアイコンからLeaflet標準の背景・枠線を除去 */
+  .shop-pin { background: transparent; border: none; }
+  .locate-btn {
+    position: absolute;
+    bottom: 24px;
+    right: 12px;
+    z-index: 500;
+    background: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 14px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    font-size: 13px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <span>長岡市 参加店舗マップ(デモ)</span>
+  <span class="sub">OpenStreetMap + Leaflet</span>
+</div>
+<div style="position:relative; height: calc(100% - 52px);">
+  <div id="map"></div>
+  <button class="locate-btn" onclick="locateMe()">📍 現在地から探す</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<script>
+  // 長岡市のおおよその範囲(取得失敗時のフォールバック用)
+  const fallbackBounds = L.latLngBounds(
+    [37.28, 138.70],
+    [37.62, 139.05]
+  );
+
+  // 長岡市中心付近を初期表示
+  const map = L.map('map', {
+    minZoom: 10
+  }).setView([37.4468, 138.8514], 13);
+
+  // シンプル・淡色系のデフォルメされたスタイル(CartoDB Positron)
+  // 地形の色分けや道路番号標識などの装飾を抑え、店舗マーカーが見やすい配色にする
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+    maxZoom: 19,
+    subdomains: 'abcd'
+  }).addTo(map);
+
+  // 世界全体を覆う外枠(白マスクの土台)
+  const worldRing = [
+    [-89, -179], [-89, 179], [89, 179], [89, -179]
+  ];
+
+  // GeoJSONのPolygon/MultiPolygon座標([lng,lat])をLeaflet形式([lat,lng])のholeリングに変換
+  function toHoleRings(geometry) {
+    const rings = [];
+    if (geometry.type === "Polygon") {
+      // 外周(最初のリング)だけを穴として使う
+      rings.push(geometry.coordinates[0].map(c => [c[1], c[0]]));
+    } else if (geometry.type === "MultiPolygon") {
+      geometry.coordinates.forEach(poly => {
+        rings.push(poly[0].map(c => [c[1], c[0]]));
+      });
+    }
+    return rings;
+  }
+
+  function applyMask(geometry) {
+    const holes = toHoleRings(geometry);
+    L.polygon([worldRing, ...holes], {
+      stroke: false,
+      fillColor: "#ffffff",
+      fillOpacity: 1,
+      interactive: false,
+      className: "mask-evenodd"
+    }).addTo(map);
+
+    // 境界線も薄く表示
+    L.geoJSON(geometry, {
+      style: { color: "#1f2937", weight: 2, fill: false, opacity: 0.5 }
+    }).addTo(map);
+  }
+
+  // 長岡市の境界データを取得(Nominatim)。取得できない場合は矩形範囲のみで制限する
+  fetch("https://nominatim.openstreetmap.org/search?city=%E9%95%B7%E5%B2%A1%E5%B8%82&state=%E6%96%B0%E6%BD%9F%E7%9C%8C&country=japan&format=json&polygon_geojson=1&limit=1")
+    .then(res => res.json())
+    .then(data => {
+      if (data && data.length > 0 && data[0].geojson) {
+        const geometry = data[0].geojson;
+        applyMask(geometry);
+
+        const layer = L.geoJSON(geometry);
+        const bounds = layer.getBounds();
+        map.fitBounds(bounds, { padding: [10, 10] });
+        map.setMaxBounds(bounds.pad(0.05));
+      } else {
+        throw new Error("no geojson");
+      }
+    })
+    .catch(() => {
+      // 取得失敗時は簡易的な矩形マスクにフォールバック
+      L.rectangle(fallbackBounds, { color: "transparent", fill: false }); // ダミー(範囲把握用)
+      map.setMaxBounds(fallbackBounds);
+      map.fitBounds(fallbackBounds);
+    });
+
+  // 長岡市内の実店舗データ(重複を整理済み)。ジャンルごとに色を割り当て、地図上で目立たせる
+  const shops = [
+    { name: "安田茶屋", genre: "甘味処・茶屋", coupon: "アンケート回答でクーポン進呈", lat: 37.4526, lng: 138.8351, color: "#8e5572" },
+    { name: "小嶋屋総本店 長岡喜多町店", genre: "へぎそば", coupon: "アンケート回答でクーポン進呈", lat: 37.4428, lng: 138.8142, color: "#3d84a8" },
+    { name: "レストラン ナポリ", genre: "洋食", coupon: "アンケート回答でクーポン進呈", lat: 37.4475, lng: 138.8504, color: "#81b29a" },
+    { name: "洋食 松キッチン", genre: "洋食", coupon: "アンケート回答でクーポン進呈", lat: 37.4481, lng: 138.8532, color: "#81b29a" },
+    { name: "長岡小嶋屋 本店", genre: "へぎそば", coupon: "アンケート回答でクーポン進呈", lat: 37.4478, lng: 138.8521, color: "#3d84a8" },
+    { name: "青島食堂 宮内駅前店", genre: "ラーメン・食堂", coupon: "アンケート回答でクーポン進呈", lat: 37.4225, lng: 138.8418, color: "#f2a541" },
+    { name: "いちまる", genre: "ラーメン", coupon: "アンケート回答でクーポン進呈", lat: 37.4468, lng: 138.8509, color: "#f2a541" },
+    { name: "ラーメン潤 柿川店", genre: "ラーメン", coupon: "アンケート回答でクーポン進呈", lat: 37.4452, lng: 138.8522, color: "#f2a541" },
+    { name: "美松(MIMATSU CAFE 大手店)", genre: "カフェ", coupon: "アンケート回答でクーポン進呈", lat: 37.4472, lng: 138.8518, color: "#2f6690" },
+    { name: "小松パン店", genre: "パン", coupon: "アンケート回答でクーポン進呈", lat: 37.4461, lng: 138.8502, color: "#e09f3e" },
+    { name: "江口だんご 本店", genre: "和菓子・だんご", coupon: "アンケート回答でクーポン進呈", lat: 37.4211, lng: 138.7758, color: "#d1495b" }
+  ];
+
+  // ジャンルごとの色をつけた丸ピンアイコンを作る
+  function coloredIcon(color) {
+    return L.divIcon({
+      className: "shop-pin",
+      html: `
+        <svg width="30" height="40" viewBox="0 0 30 40" xmlns="http://www.w3.org/2000/svg">
+          <path d="M15 0C6.7 0 0 6.7 0 15c0 11 15 25 15 25s15-14 15-25C30 6.7 23.3 0 15 0z" fill="${color}" stroke="#ffffff" stroke-width="2"/>
+          <circle cx="15" cy="15" r="6" fill="#ffffff"/>
+        </svg>
+      `,
+      iconSize: [30, 40],
+      iconAnchor: [15, 40],
+      popupAnchor: [0, -36]
+    });
+  }
+
+  // マーカーをクラスタリング表示(店舗数が多くても見やすくする)
+  const markers = L.markerClusterGroup({
+    // クラスタの丸もモノトーンな地図に馴染みすぎないよう、控えめな色で表示
+    iconCreateFunction: function(cluster) {
+      return L.divIcon({
+        html: `<div style="background:#2f6690; color:#fff; border-radius:50%; width:36px; height:36px; display:flex; align-items:center; justify-content:center; font-weight:bold; border:2px solid #fff;">${cluster.getChildCount()}</div>`,
+        className: "",
+        iconSize: [36, 36]
+      });
+    }
+  });
+
+  shops.forEach(shop => {
+    const marker = L.marker([shop.lat, shop.lng], { icon: coloredIcon(shop.color) });
+    marker.bindPopup(`
+      <div class="popup-title">${shop.name}</div>
+      <div class="popup-genre">${shop.genre}</div>
+      <div class="popup-coupon">🎫 ${shop.coupon}</div>
+    `);
+    markers.addLayer(marker);
+  });
+
+  map.addLayer(markers);
+
+
+  // 現在地表示ボタン
+  let userMarker = null;
+  function locateMe() {
+    if (!navigator.geolocation) {
+      alert("この端末では位置情報を取得できません");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(pos => {
+      const { latitude, longitude } = pos.coords;
+      if (userMarker) map.removeLayer(userMarker);
+      userMarker = L.circleMarker([latitude, longitude], {
+        radius: 8,
+        fillColor: "#2563eb",
+        color: "#fff",
+        weight: 2,
+        fillOpacity: 1
+      }).addTo(map).bindPopup("現在地").openPopup();
+      map.setView([latitude, longitude], 15);
+    }, () => {
+      alert("位置情報を取得できませんでした");
+    });
+  }
+</script>
+
+</body>
+</html>
